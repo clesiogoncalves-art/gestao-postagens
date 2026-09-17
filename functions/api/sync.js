@@ -25,7 +25,7 @@ export async function onRequest(context) {
                      <tipo>L</tipo>
                      <resultado>T</resultado>
                      <lingua>101</lingua>
-                     <!-- IMPORTANTE: Substitua pelos seus objetos ou implemente a lógica de busca do CWS -->
+                     <!-- Substitua pelos seus objetos ou implemente a busca do CWS -->
                      <objetos>AA123456789BR</objetos> 
                   </res:buscaEventosLista>
                </soapenv:Body>
@@ -36,7 +36,8 @@ export async function onRequest(context) {
             method: 'POST',
             headers: {
                 'Content-Type': 'text/xml;charset=UTF-8',
-                'SOAPAction': ''
+                'SOAPAction': '',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             },
             body: xmlBody
         });
@@ -50,9 +51,7 @@ export async function onRequest(context) {
 
         const xmlText = await correiosResponse.text();
         
-        // Aqui você faria o Parse do XML retornado pelos Correios
-        // Para este exemplo, vamos retornar um mock no formato esperado pelo seu HTML
-        
+        // Exemplo de retorno formatado esperado pelo HTML do Dashboard
         const dataFormatada = [
             {
                 objeto: "AA123456789BR",
@@ -77,12 +76,3 @@ export async function onRequest(context) {
         });
     }
 }
-const correiosResponse = await fetch('https://webservice.correios.com.br/service/rastro', {
-    method: 'POST',
-    headers: {
-        'Content-Type': 'text/xml;charset=UTF-8',
-        'SOAPAction': '',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    },
-    body: xmlBody
-});
