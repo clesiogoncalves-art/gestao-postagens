@@ -1,7 +1,7 @@
 export async function onRequest(context) {
     const { env } = context;
 
-    // Resgata as variáveis configuradas no painel do Cloudflare
+    // Resgata as credenciais cadastradas nas Variáveis do Cloudflare
     const codAdmin = env.CORREIOS_COD_ADMIN;
     const user = env.CORREIOS_USER;
     const pass = env.CORREIOS_PASS;
@@ -13,64 +13,81 @@ export async function onRequest(context) {
         });
     }
 
-    try {
-        // Exemplo de corpo SOAP exigido pela API dos Correios (BuscaEventosLista)
-        const xmlBody = `
-            <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:res="http://resource.webservice.correios.com.br/">
-               <soapenv:Header/>
-               <soapenv:Body>
-                  <res:buscaEventosLista>
-                     <usuario>${user}</usuario>
-                     <senha>${pass}</senha>
-                     <tipo>L</tipo>
-                     <resultado>T</resultado>
-                     <lingua>101</lingua>
-                     <!-- Substitua pelos seus objetos ou implemente a busca do CWS -->
-                     <objetos>AA123456789BR</objetos> 
-                  </res:buscaEventosLista>
-               </soapenv:Body>
-            </soapenv:Envelope>
-        `;
+    // Obtém a data de hoje no formato DD/MM/YYYY exigido pelos Correios
+    const today = new Date();
+    const dd = String(today.getDate()).padStart(2, '0');
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const yyyy = today.getFullYear();
+    const dataConsulta = `${dd}/${mm}/${yyyy}`;
 
-        const correiosResponse = await fetch('https://webservice.correios.com.br/service/rastro', {
+    // Monta o Envelope SOAP do método acompanharPedidoPorData (Anexo do Manual)
+    const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://service.logisticareversa.correios.com.br/">
+   <soapenv:Header/>
+   <soapenv:Body>
+      <ser:acompanharPedidoPorData>
+         <codAdministrativo>${codAdmin}</codAdministrativo>
+         <tipoSolicitacao>A</tipoSolicitacao>
+         <data>${dataConsulta}</data>
+      </ser:acompanharPedidoPorData>
+   </soapenv:Body>
+</soapenv:Envelope>`;
+
+    try {
+        // Dispara a requisição HTTP com os cabeçalhos de segurança e autenticação CWS
+        const response = await fetch('https://logisticareversa.correios.com.br/logisticaReversaWS/logisticareversaWS', {
             method: 'POST',
             headers: {
                 'Content-Type': 'text/xml;charset=UTF-8',
-                'SOAPAction': '',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'Authorization': 'Basic ' + btoa(`${user}:${pass}`),
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             },
             body: xmlBody
         });
 
-        if (!correiosResponse.ok) {
-            return new Response(JSON.stringify({ error: `Erro na API dos Correios: ${correiosResponse.status}` }), {
-                status: correiosResponse.status,
+        if (!response.ok) {
+            return new Response(JSON.stringify({ error: `Erro HTTP Correios: ${response.status}` }), {
+                status: response.status,
                 headers: { 'Content-Type': 'application/json' }
             });
         }
 
-        const xmlText = await correiosResponse.text();
-        
-        // Exemplo de retorno formatado esperado pelo HTML do Dashboard
-        const dataFormatada = [
-            {
-                objeto: "AA123456789BR",
-                dataSolicitacao: "17/09/2026 10:00",
-                dataPostagem: "17/09/2026 14:00",
-                remetente: "Sillion Teste",
-                cidade: "Belo Horizonte",
-                uf: "MG",
-                status: "Objeto postado"
-            }
-        ];
+        const xmlText = await response.text();
 
-        return new Response(JSON.stringify(dataFormatada), {
+        // Extrai cada bloco de objeto (<coleta>) do XML retornado
+        const coletasMatches = xmlText.match(/<coleta>[\s\S]*?<\/coleta>/g) || [];
+
+        const listaFormatada = coletasMatches.map(itemXml => {
+            const extract = (tag) => {
+                const m = itemXml.match(new RegExp(`<${tag}>(.*?)<\/${tag}>`));
+                return m ? m[1].trim() : '';
+            };
+
+            const etiqueta = extract('numero_etiqueta');
+            const pedido = extract('numero_pedido');
+            const statusDesc = extract('descricao_status');
+            const dataAtt = extract('data_atualizacao');
+            const remetenteCtrl = extract('controle_cliente');
+
+            return {
+                objeto: etiqueta || pedido || 'S/N',
+                dataSolicitacao: dataAtt || dataConsulta,
+                dataPostagem: dataAtt || '-',
+                difDias: '0 dia(s)',
+                remetente: remetenteCtrl || 'Não Informado',
+                cidade: 'Origem Correios',
+                uf: 'MG',
+                status: statusDesc || 'Aguardando Objeto na Agência'
+            };
+        });
+
+        return new Response(JSON.stringify(listaFormatada), {
             status: 200,
             headers: { 'Content-Type': 'application/json' }
         });
 
-    } catch (error) {
-        return new Response(JSON.stringify({ error: error.message }), {
+    } catch (err) {
+        return new Response(JSON.stringify({ error: err.message }), {
             status: 500,
             headers: { 'Content-Type': 'application/json' }
         });
