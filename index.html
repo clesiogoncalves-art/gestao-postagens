@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard de Postagens e Rastreamento de Equipamentos - Sillion</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- SheetJS (Leitura de Excel/XLS) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen p-6 font-sans">
+
+    <!-- Header com Logo da Sillion -->
+    <header class="mb-8 border-b border-slate-800 pb-4">
+        <div class="flex justify-center mb-4">
+            <img src="sillion2.png" alt="Sillion Logo" class="h-12 object-contain" onerror="this.style.display='none'">
+        </div>
+        <div class="flex flex-col md:flex-row justify-between items-center gap-2">
+            <div>
+                <h1 class="text-3xl font-bold text-white tracking-tight flex items-center gap-3">
+                    <i class="fa-solid fa-truck-ramp-box text-blue-500"></i>
+                    Gestão de Postagens de Equipamentos
+                </h1>
+                <p class="text-slate-400 text-sm mt-1">Acompanhamento, conciliação e controle de recebimento de objetos postados</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <button onclick="syncCorreiosAPI()" class="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-4 py-2 rounded-lg transition-all text-sm shadow-lg shadow-blue-600/20 flex items-center gap-2">
+                    <i id="syncSpinner" class="fa-solid fa-rotate text-xs"></i>
+                    Sincronizar Correios
+                </button>
+                <span id="apiStatusBadge" class="bg-blue-500/10 text-blue-400 text-xs font-semibold px-3 py-1 rounded-full border border-blue-500/20">
+                    Módulo Logística
+                </span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Controle de Automação & Upload de Arquivo Manual -->
+    <section class="bg-slate-800/60 backdrop-blur border border-slate-700/50 p-6 rounded-xl mb-8 shadow-xl">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4 pb-4 border-b border-slate-700/50">
+            <div>
+                <h2 class="text-base font-semibold text-slate-200 flex items-center gap-2">
+                    <i class="fa-solid fa-bolt text-amber-400"></i>
+                    Sincronização Automática via WebService Correios
+                </h2>
+                <p class="text-xs text-slate-400 mt-0.5">Leitura de solicitações e rastreamento em tempo real direto da base de dados dos Correios (Ativo no Netlify).</p>
+            </div>
+            <span id="lastSyncTime" class="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-lg border border-slate-700">
+                Última sincronização: Não realizada
+            </span>
+        </div>
+
+        <details class="group" open>
+            <summary class="text-xs font-semibold text-slate-400 hover:text-slate-200 cursor-pointer flex items-center gap-2 select-none">
+                <i class="fa-solid fa-file-excel text-emerald-400"></i>
+                <span>Importação Manual por Arquivo Excel (.xls / .xlsx) — [Modo Local / Contingência]</span>
+                <i class="fa-solid fa-chevron-down text-[10px] group-open:rotate-180 transition-transform"></i>
+            </summary>
+            <div class="flex flex-col sm:flex-row gap-4 items-center mt-3 pt-3 border-t border-slate-700/40">
+                <input type="file" id="excelFile" accept=".xlsx, .xls" class="block w-full text-xs text-slate-400 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-700 file:text-slate-200 hover:file:bg-slate-600 cursor-pointer"/>
+                <button onclick="processExcel()" class="w-full sm:w-auto bg-blue-600 hover:bg-blue-500 text-white font-medium px-6 py-2.5 rounded-lg transition-all text-sm shadow-lg whitespace-nowrap flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-gears"></i> Processar Relatório Manual
+                </button>
+            </div>
+        </details>
+    </section>
+
+    <!-- Barra de Filtros Ativos e Ações -->
+    <section class="flex flex-wrap justify-between items-center bg-slate-800/40 border border-slate-700/60 p-4 rounded-xl mb-8 gap-4">
+        <div class="flex items-center gap-2">
+            <span class="text-xs font-semibold uppercase text-slate-400">Filtros Ativos:</span>
+            <div id="activeFiltersContainer" class="flex flex-wrap gap-2">
+                <span class="text-xs text-slate-500">Nenhum filtro aplicado (Exibindo todos os dados)</span>
+            </div>
+        </div>
+        <div class="flex items-center gap-2">
+            <button onclick="clearFilters()" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold px-3 py-1.5 rounded-lg border border-slate-600 transition-all flex items-center gap-1.5">
+                <i class="fa-solid fa-filter-circle-xmark"></i> Limpar Filtros
+            </button>
+            <button onclick="resetAllReceived()" class="text-xs bg-rose-950/80 hover:bg-rose-900 text-rose-300 font-semibold px-3 py-1.5 rounded-lg border border-rose-800/60 transition-all flex items-center gap-1.5">
+                <i class="fa-solid fa-trash-can"></i> Zerar Recebimentos
+            </button>
+        </div>
+    </section>
+
+    <!-- Cartões de Status do Objeto -->
+    <div class="mb-8">
+        <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3">Status do Objeto (Clique para Filtrar)</h2>
+        <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div id="cardStatusTotal" onclick="setFilter('status', 'ALL')" class="kpi-card bg-slate-800/80 border border-slate-700 p-4 rounded-xl cursor-pointer hover:border-blue-500 transition-all select-none">
+                <p class="text-xs text-slate-400 uppercase font-medium">Total de Objetos</p>
+                <p id="kpiTotalObjetos" class="text-3xl font-bold text-white mt-2">0</p>
+                <p class="text-[10px] text-slate-500 mt-1">Total geral postado</p>
+            </div>
+            <div id="cardStatusEntregue" onclick="setFilter('status', 'Entregue')" class="kpi-card bg-slate-800/80 border border-emerald-500/40 p-4 rounded-xl cursor-pointer hover:border-emerald-500 transition-all select-none">
+                <p class="text-xs text-emerald-400 uppercase font-semibold">Status: Entregue</p>
+                <p id="kpiEntregue" class="text-3xl font-bold text-emerald-400 mt-2">0</p>
+                <p class="text-[10px] text-slate-400 mt-1">Objetos com entrega efetuada</p>
+            </div>
+            <div id="cardStatusColetado" onclick="setFilter('status', 'Coletado')" class="kpi-card bg-slate-800/80 border border-amber-500/40 p-4 rounded-xl cursor-pointer hover:border-amber-500 transition-all select-none">
+                <p class="text-xs text-amber-400 uppercase font-semibold">Status: Coletado</p>
+                <p id="kpiColetado" class="text-3xl font-bold text-amber-400 mt-2">0</p>
+                <p class="text-[10px] text-slate-400 mt-1">Objetos em trânsito / coletados</p>
+            </div>
+            <div id="cardStatusRecebidoLogistica" onclick="setFilter('recebidoLogistica', 'TRUE')" class="kpi-card bg-slate-800/80 border border-teal-500/40 p-4 rounded-xl cursor-pointer hover:border-teal-500 transition-all select-none">
+                <p class="text-xs text-teal-400 uppercase font-semibold">Recebidos na Logística</p>
+                <p id="kpiRecebidoLogistica" class="text-3xl font-bold text-teal-400 mt-2">0</p>
+                <p class="text-[10px] text-slate-400 mt-1">Objetos confirmados na logística</p>
+            </div>
+        </section>
+    </div>
+
+    <!-- Cartões por UF Origem -->
+    <div class="mb-8">
+        <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3">Total de Equipamentos por UF Origem (Clique para Filtrar)</h2>
+        <section id="ufGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3">
+            <div class="col-span-full bg-slate-800/40 border border-slate-700/50 p-4 rounded-xl text-center text-slate-500 text-xs">
+                Aguardando carregamento dos dados...
+            </div>
+        </section>
+    </div>
+
+    <!-- Cartões por Remetente -->
+    <div class="mb-8">
+        <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3">Postagens por Remetente (Clique para Filtrar)</h2>
+        <section id="remetentesGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div class="col-span-full bg-slate-800/40 border border-slate-700/50 p-4 rounded-xl text-center text-slate-500 text-xs">
+                Aguardando carregamento dos dados...
+            </div>
+        </section>
+    </div>
+
+    <!-- Gráfico por Cidade Origem -->
+    <section class="bg-slate-800/80 border border-slate-700 p-5 rounded-xl mb-8 shadow-xl">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-sm font-semibold text-slate-200">Total de Objetos Postados por Cidade Origem</h3>
+            <span id="chartSummary" class="text-xs text-slate-400">0 cidades identificadas</span>
+        </div>
+        <div class="h-80">
+            <canvas id="chartCidades"></canvas>
+        </div>
+    </section>
+
+    <!-- Tabela Detalhada -->
+    <section class="bg-slate-800/80 border border-slate-700 p-5 rounded-xl shadow-xl">
+        <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-3">
+            <h3 class="text-sm font-semibold text-slate-200">Detalhamento das Postagens</h3>
+            <input type="text" id="tableSearch" onkeyup="filterTableBySearch()" placeholder="Buscar por objeto, remetente, cidade..." class="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 w-full sm:w-64 outline-none focus:border-blue-500"/>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-xs text-left text-slate-300">
+                <thead class="text-[11px] text-slate-400 uppercase bg-slate-900/60 border-b border-slate-700">
+                    <tr>
+                        <th class="py-3 px-3">Nº do Objeto</th>
+                        <th class="py-3 px-3">Data da Solicitação</th>
+                        <th class="py-3 px-3">Data da Postagem</th>
+                        <th class="py-3 px-3">Diferença (Dias)</th>
+                        <th class="py-3 px-3">Remetente</th>
+                        <th class="py-3 px-3">Cidade Origem</th>
+                        <th class="py-3 px-3">UF Origem</th>
+                        <th class="py-3 px-3">Status</th>
+                        <th class="py-3 px-3 text-center">Recebimento Logística</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody" class="divide-y divide-slate-700/50">
+                    <tr>
+                        <td colspan="9" class="py-4 text-center text-slate-500">Nenhum registro carregado.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="mt-3 text-right">
+            <span id="tableCounter" class="text-[11px] text-slate-500">0 registros exibidos</span>
+        </div>
+    </section>
+
+    <!-- Modal de Confirmação de Recebimento -->
+    <div id="receiptModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-slate-800 border border-slate-700 rounded-xl p-6 max-w-lg w-full shadow-2xl relative">
+            <h3 class="text-lg font-bold text-white mb-2 flex items-center gap-2">
+                <i class="fa-solid fa-box-archive text-emerald-400"></i>
+                Confirmar Recebimento na Logística
+            </h3>
+            <p class="text-xs text-slate-400 mb-4">
+                Ao confirmar, o status será atualizado para <strong>Recebido</strong> e uma notificação de e-mail será gerada para a equipe da logística Sillion.
+            </p>
+
+            <div id="modalObjectDetails" class="bg-slate-900 border border-slate-700/80 rounded-lg p-3 text-xs space-y-1.5 mb-4 font-mono text-slate-300"></div>
+
+            <div class="mb-4">
+                <label class="block text-xs font-semibold text-slate-300 mb-1">Observações do Recebimento (Opcional):</label>
+                <textarea id="modalObsInput" rows="2" placeholder="Ex: Equipamento recebido em perfeitas condições..." class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 outline-none focus:border-emerald-500"></textarea>
+            </div>
+
+            <div class="mb-5 bg-slate-900/60 border border-slate-700/50 p-2.5 rounded-lg">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Destinatários da Notificação:</span>
+                <p class="text-[11px] text-emerald-400 font-mono">
+                    clesio.goncalves@sillion.com.br, carla.lemos@sillion.com.br, ronan.santos@sillion.com.br, arlei.paixao@sillion.com.br
+                </p>
+            </div>
+
+            <div class="flex justify-end gap-3">
+                <button onclick="closeReceiptModal()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs font-semibold transition">
+                    Cancelar
+                </button>
+                <button id="btnConfirmReceipt" onclick="executeReceiptProcess()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-lg shadow-emerald-600/20 transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-paper-plane"></i>
+                    Confirmar e Enviar E-mail
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allData = [];
+        let filters = {
+            uf: 'ALL',
+            status: 'ALL',
+            remetente: 'ALL',
+            recebidoLogistica: 'ALL',
+            search: ''
+        };
+
+        const NOTIFICATION_EMAILS = [
+            "clesio.goncalves@sillion.com.br",
+            "carla.lemos@sillion.com.br",
+            "ronan.santos@sillion.com.br",
+            "arlei.paixao@sillion.com.br"
+        ];
+
+        let receivedMap = JSON.parse(localStorage.getItem('sillion_received_objects') || '{}');
+        let pendingReceiptObject = null;
+        let cityChart = null;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            syncCorreiosAPI();
+        });
+
+        // =========================================================================
+        // AUTOMAÇÃO VIAL NETLIFY FUNCTION (PROTEGIDA CONTRA ERROS DE FILE://)
+        // =========================================================================
+        async function syncCorreiosAPI() {
+            const spinner = document.getElementById('syncSpinner');
+            const badge = document.getElementById('apiStatusBadge');
+
+            // Se aberto via protocolo local (file://), desativa a busca no Netlify para não gerar erro CORS no console
+            if (window.location.protocol === 'file:') {
+                if (badge) {
+                    badge.innerText = "Modo Local / Arquivo Manual";
+                    badge.className = "bg-slate-700 text-slate-300 text-xs font-semibold px-3 py-1 rounded-full border border-slate-600";
+                }
+                document.getElementById('lastSyncTime').innerText = "Ambiente Local: Importe o arquivo Excel no painel abaixo.";
+                return;
+            }
+
+            if (spinner) spinner.classList.add('fa-spin');
+            if (badge) {
+                badge.innerText = "Sincronizando...";
+                badge.className = "bg-amber-500/10 text-amber-400 text-xs font-semibold px-3 py-1 rounded-full border border-amber-500/20 animate-pulse";
+            }
+
+            try {
+                const response = await fetch('/.netlify/functions/correios-sync', {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP Error ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                if (data && data.length > 0) {
+                    allData = data.map(item => ({
+                        objeto: item.objeto || 'N/A',
+                        dataSolicitacao: item.dataSolicitacao || '-',
+                        dataPostagem: item.dataPostagem || '-',
+                        difDias: item.difDias || calcDaysDiff(item.dataSolicitacao, item.dataPostagem),
+                        remetente: item.remetente || 'Não Informado',
+                        cidade: item.cidade || 'Não Informada',
+                        uf: item.uf || 'ND',
+                        status: item.status || 'Indefinido'
+                    }));
+
+                    applyFilters();
+
+                    const now = new Date();
+                    document.getElementById('lastSyncTime').innerText = `Última sincronização: ${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}`;
+                    
+                    if (badge) {
+                        badge.innerText = "API Conectada";
+                        badge.className = "bg-emerald-500/10 text-emerald-400 text-xs font-semibold px-3 py-1 rounded-full border border-emerald-500/20";
+                    }
+                } else {
+                    throw new Error("Base retornou vazia");
+                }
+
+            } catch (err) {
+                console.warn('Função Netlify indisponível ou ainda não publicada:', err);
+                if (badge) {
+                    badge.innerText = "Modo Fallback / Manual";
+                    badge.className = "bg-slate-700 text-slate-300 text-xs font-semibold px-3 py-1 rounded-full border border-slate-600";
+                }
+            } finally {
+                if (spinner) spinner.classList.remove('fa-spin');
+            }
+        }
+
+        // =========================================================================
+        // PROCESSAMENTO DE EXCEL / HTML MANUAL (FALLBACK / MODO LOCAL)
+        // =========================================================================
+        async function processExcel() {
+            const input = document.getElementById('excelFile');
+            if (!input.files || !input.files[0]) {
+                alert("Por favor, selecione o arquivo de relatório em Excel.");
+                return;
+            }
+
+            const file = input.files[0];
+            const textReader = new FileReader();
+            textReader.onload = (e) => {
+                const textContent = e.target.result;
+                if (textContent.includes('<table') || textContent.includes('<tr')) {
+                    parseHtmlReport(textContent);
+                } else {
+                    readBinaryExcel(file);
+                }
+            };
+            textReader.readAsText(file, 'ISO-8859-1');
+        }
+
+        function normalizeStr(str) {
+            return String(str || "")
+                .toLowerCase()
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .replace(/[ºª]/g, '')
+                .trim();
+        }
+
+        function getVal(row, possibleKeys) {
+            for (let p of possibleKeys) {
+                const cleanP = normalizeStr(p);
+                for (let key in row) {
+                    const cleanKey = normalizeStr(key);
+                    if (cleanKey === cleanP) {
+                        const val = String(row[key]).trim();
+                        if (val !== "") return val;
+                    }
+                }
+            }
+            for (let p of possibleKeys) {
+                const cleanP = normalizeStr(p);
+                for (let key in row) {
+                    const cleanKey = normalizeStr(key);
+                    if (cleanKey.includes(cleanP)) {
+                        const val = String(row[key]).trim();
+                        if (val !== "") return val;
+                    }
+                }
+            }
+            return "";
+        }
+
+        function parseBrDate(str) {
+            if (!str || str === '-') return null;
+            const parts = str.trim().split(' ');
+            const dateParts = parts[0].split('/');
+            if (dateParts.length < 3) return null;
+            const day = parseInt(dateParts[0], 10);
+            const month = parseInt(dateParts[1], 10) - 1;
+            const year = parseInt(dateParts[2], 10);
+            
+            let hours = 0, minutes = 0;
+            if (parts.length > 1 && parts[1].includes(':')) {
+                const timeParts = parts[1].split(':');
+                hours = parseInt(timeParts[0], 10) || 0;
+                minutes = parseInt(timeParts[1], 10) || 0;
+            }
+            return new Date(year, month, day, hours, minutes);
+        }
+
+        function calcDaysDiff(dateStartStr, dateEndStr) {
+            const d1 = parseBrDate(dateStartStr);
+            const d2 = parseBrDate(dateEndStr);
+            if (!d1 || !d2) return '-';
+            const diffMs = d2.getTime() - d1.getTime();
+            if (isNaN(diffMs)) return '-';
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            return `${diffDays} dia(s)`;
+        }
+
+        function parseHtmlReport(htmlText) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlText, 'text/html');
+            const trs = Array.from(doc.querySelectorAll('tr'));
+            if (trs.length < 2) return alert("Nenhum dado encontrado no relatório.");
+
+            const headerTds = Array.from(trs[0].querySelectorAll('td, th')).map(el => el.textContent.trim());
+            allData = [];
+
+            for (let i = 1; i < trs.length; i++) {
+                const tds = Array.from(trs[i].querySelectorAll('td, th')).map(el => el.textContent.trim());
+                if (tds.length === headerTds.length) {
+                    const row = {};
+                    headerTds.forEach((h, idx) => row[h] = tds[idx]);
+
+                    const objeto = getVal(row, ['n do objeto', 'no do objeto', 'numero do objeto', 'objeto']);
+                    if (objeto && objeto.toLowerCase() !== 'nº do objeto') {
+                        allData.push({
+                            objeto,
+                            dataSolicitacao: getVal(row, ['data de solicitacao', 'data solicitacao']) || '-',
+                            dataPostagem: getVal(row, ['data da postagem', 'data postagem']) || '-',
+                            difDias: calcDaysDiff(getVal(row, ['data de solicitacao', 'data solicitacao']), getVal(row, ['data da postagem', 'data postagem'])),
+                            remetente: getVal(row, ['remetente']) || 'Não Informado',
+                            cidade: getVal(row, ['cidade origem', 'cidade']) || 'Não Informada',
+                            uf: getVal(row, ['uf origem', 'uf']) || 'ND',
+                            status: getVal(row, ['status do objeto', 'status']) || 'Indefinido'
+                        });
+                    }
+                }
+            }
+            applyFilters();
+        }
+
+        function readBinaryExcel(file) {
+            const arrayReader = new FileReader();
+            arrayReader.onload = (e) => {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                allData = [];
+
+                workbook.SheetNames.forEach(sheetName => {
+                    const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "" });
+                    rawRows.forEach(row => {
+                        const objeto = getVal(row, ['n do objeto', 'no do objeto', 'numero do objeto', 'objeto']);
+                        if (objeto && objeto.toLowerCase() !== 'nº do objeto') {
+                            const dataSolicitacao = formatDate(getVal(row, ['data de solicitacao', 'data solicitacao']));
+                            const dataPostagem = formatDate(getVal(row, ['data da postagem', 'data postagem']));
+                            allData.push({
+                                objeto,
+                                dataSolicitacao,
+                                dataPostagem,
+                                difDias: calcDaysDiff(dataSolicitacao, dataPostagem),
+                                remetente: getVal(row, ['remetente']) || 'Não Informado',
+                                cidade: getVal(row, ['cidade origem', 'cidade']) || 'Não Informada',
+                                uf: getVal(row, ['uf origem', 'uf']) || 'ND',
+                                status: getVal(row, ['status do objeto', 'status']) || 'Indefinido'
+                            });
+                        }
+                    });
+                });
+                applyFilters();
+            };
+            arrayReader.readAsArrayBuffer(file);
+        }
+
+        function formatDate(raw) {
+            if (!raw) return '-';
+            if (typeof raw === 'number') {
+                const date = new Date((raw - (25567 + 2)) * 86400 * 1000);
+                return date.toLocaleDateString('pt-BR') + ' ' + date.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'});
+            }
+            return String(raw);
+        }
+
+        function setFilter(type, value) {
+            filters[type] = (filters[type] === value && value !== 'ALL') ? 'ALL' : value;
+            applyFilters();
+        }
+
+        function clearFilters() {
+            filters = { uf: 'ALL', status: 'ALL', remetente: 'ALL', recebidoLogistica: 'ALL', search: '' };
+            document.getElementById('tableSearch').value = '';
+            applyFilters();
+        }
+
+        function filterTableBySearch() {
+            filters.search = document.getElementById('tableSearch').value.toLowerCase().trim();
+            applyFilters();
+        }
+
+        function applyFilters() {
+            const filteredData = allData.filter(d => {
+                const isReceived = !!receivedMap[d.objeto];
+                return (filters.uf === 'ALL' || d.uf === filters.uf) &&
+                       (filters.status === 'ALL' || d.status.toLowerCase() === filters.status.toLowerCase()) &&
+                       (filters.remetente === 'ALL' || d.remetente === filters.remetente) &&
+                       (filters.recebidoLogistica === 'ALL' || (filters.recebidoLogistica === 'TRUE' && isReceived)) &&
+                       (!filters.search || d.objeto.toLowerCase().includes(filters.search) || d.remetente.toLowerCase().includes(filters.search) || d.cidade.toLowerCase().includes(filters.search) || d.uf.toLowerCase().includes(filters.search));
+            });
+
+            updateFilterBadges();
+            updateStatusCards(filteredData);
+            updateUfCards(filteredData);
+            updateRemetenteCards(filteredData);
+            updateChart(filteredData);
+            updateTable(filteredData);
+        }
+
+        function updateFilterBadges() {
+            const container = document.getElementById('activeFiltersContainer');
+            container.innerHTML = '';
+            let hasFilter = false;
+
+            if (filters.uf !== 'ALL') { hasFilter = true; container.innerHTML += `<span class="bg-blue-600/30 text-blue-300 border border-blue-500/40 text-xs px-2.5 py-0.5 rounded-full flex items-center gap-1">UF: ${filters.uf} <button onclick="setFilter('uf', 'ALL')" class="hover:text-white font-bold">×</button></span>`; }
+            if (filters.status !== 'ALL') { hasFilter = true; container.innerHTML += `<span class="bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-xs px-2.5 py-0.5 rounded-full flex items-center gap-1">Status: ${filters.status} <button onclick="setFilter('status', 'ALL')" class="hover:text-white font-bold">×</button></span>`; }
+            if (filters.remetente !== 'ALL') { hasFilter = true; container.innerHTML += `<span class="bg-purple-600/30 text-purple-300 border border-purple-500/40 text-xs px-2.5 py-0.5 rounded-full flex items-center gap-1">Remetente: ${filters.remetente} <button onclick="setFilter('remetente', 'ALL')" class="hover:text-white font-bold">×</button></span>`; }
+            if (filters.recebidoLogistica !== 'ALL') { hasFilter = true; container.innerHTML += `<span class="bg-teal-600/30 text-teal-300 border border-teal-500/40 text-xs px-2.5 py-0.5 rounded-full flex items-center gap-1">Recebidos na Logística <button onclick="setFilter('recebidoLogistica', 'ALL')" class="hover:text-white font-bold">×</button></span>`; }
+            if (filters.search) { hasFilter = true; container.innerHTML += `<span class="bg-amber-600/30 text-amber-300 border border-amber-500/40 text-xs px-2.5 py-0.5 rounded-full flex items-center gap-1">Busca: "${filters.search}" <button onclick="filters.search=''; document.getElementById('tableSearch').value=''; applyFilters();" class="hover:text-white font-bold">×</button></span>`; }
+
+            if (!hasFilter) container.innerHTML = `<span class="text-xs text-slate-500">Nenhum filtro aplicado (Exibindo todos os dados)</span>`;
+        }
+
+        function updateStatusCards(data) {
+            let total = data.length, entregue = 0, coletado = 0, recebidosLogistica = 0;
+            allData.forEach(d => { if (receivedMap[d.objeto]) recebidosLogistica++; });
+            data.forEach(d => {
+                const st = d.status.toLowerCase();
+                if (st.includes('entregue')) entregue++;
+                else if (st.includes('coletado')) coletado++;
+            });
+
+            document.getElementById('kpiTotalObjetos').innerText = total;
+            document.getElementById('kpiEntregue').innerText = entregue;
+            document.getElementById('kpiColetado').innerText = coletado;
+            document.getElementById('kpiRecebidoLogistica').innerText = recebidosLogistica;
+
+            document.querySelectorAll('#cardStatusTotal, #cardStatusEntregue, #cardStatusColetado, #cardStatusRecebidoLogistica').forEach(c => c.classList.remove('ring-2', 'ring-blue-500', 'ring-emerald-500', 'ring-amber-500', 'ring-teal-500'));
+            if (filters.recebidoLogistica === 'TRUE') document.getElementById('cardStatusRecebidoLogistica').classList.add('ring-2', 'ring-teal-500');
+            else if (filters.status === 'Entregue') document.getElementById('cardStatusEntregue').classList.add('ring-2', 'ring-emerald-500');
+            else if (filters.status === 'Coletado') document.getElementById('cardStatusColetado').classList.add('ring-2', 'ring-amber-500');
+            else if (filters.status === 'ALL') document.getElementById('cardStatusTotal').classList.add('ring-2', 'ring-blue-500');
+        }
+
+        function updateUfCards(data) {
+            const ufMap = {};
+            allData.filter(d => (filters.status === 'ALL' || d.status.toLowerCase() === filters.status.toLowerCase()) && (filters.remetente === 'ALL' || d.remetente === filters.remetente)).forEach(d => ufMap[d.uf] = (ufMap[d.uf] || 0) + 1);
+
+            const grid = document.getElementById('ufGrid');
+            grid.innerHTML = '';
+            const sortedUfs = Object.entries(ufMap).sort((a, b) => b[1] - a[1]);
+            if (sortedUfs.length === 0) return grid.innerHTML = `<div class="col-span-full text-center text-slate-500 text-xs py-3">Nenhuma UF disponível.</div>`;
+
+            sortedUfs.forEach(([uf, count]) => {
+                const card = document.createElement('div');
+                card.className = `kpi-card bg-slate-800/80 border p-3 rounded-xl cursor-pointer transition-all select-none text-center ${filters.uf === uf ? 'border-blue-500 ring-2 ring-blue-500 bg-slate-700/80' : 'border-slate-700 hover:border-blue-500'}`;
+                card.onclick = () => setFilter('uf', uf);
+                card.innerHTML = `<p class="text-xs font-bold text-slate-300 uppercase">${uf}</p><p class="text-xl font-extrabold text-blue-400 mt-0.5">${count}</p><p class="text-[9px] text-slate-400 mt-0.5">equipamentos</p>`;
+                grid.appendChild(card);
+            });
+        }
+
+        function updateRemetenteCards(data) {
+            const remMap = {};
+            allData.filter(d => (filters.uf === 'ALL' || d.uf === filters.uf) && (filters.status === 'ALL' || d.status.toLowerCase() === filters.status.toLowerCase())).forEach(d => remMap[d.remetente] = (remMap[d.remetente] || 0) + 1);
+
+            const grid = document.getElementById('remetentesGrid');
+            grid.innerHTML = '';
+            const sortedRems = Object.entries(remMap).sort((a, b) => b[1] - a[1]);
+            if (sortedRems.length === 0) return grid.innerHTML = `<div class="col-span-full text-center text-slate-500 text-xs py-3">Nenhum remetente disponível.</div>`;
+
+            sortedRems.forEach(([rem, count]) => {
+                const card = document.createElement('div');
+                card.className = `kpi-card bg-slate-800/80 border p-3 rounded-xl cursor-pointer transition-all select-none ${filters.remetente === rem ? 'border-purple-500 ring-2 ring-purple-500 bg-slate-700/80' : 'border-slate-700 hover:border-purple-500'}`;
+                card.onclick = () => setFilter('remetente', rem);
+                card.innerHTML = `<p class="text-[11px] font-semibold text-slate-200 truncate" title="${rem}">${rem}</p><div class="flex justify-between items-baseline mt-1"><p class="text-lg font-bold text-purple-400">${count}</p><span class="text-[10px] text-slate-400">postagens</span></div>`;
+                grid.appendChild(card);
+            });
+        }
+
+        function updateChart(data) {
+            const cityMap = {};
+            data.forEach(d => cityMap[d.cidade] = (cityMap[d.cidade] || 0) + 1);
+            const sortedCities = Object.entries(cityMap).sort((a, b) => b[1] - a[1]);
+            const labels = sortedCities.map(c => c[0]), values = sortedCities.map(c => c[1]);
+
+            document.getElementById('chartSummary').innerText = `${labels.length} cidades de origem encontradas`;
+            if (cityChart) cityChart.destroy();
+
+            cityChart = new Chart(document.getElementById('chartCidades').getContext('2d'), {
+                type: 'bar',
+                data: { labels, datasets: [{ label: 'Objetos Postados', data: values, backgroundColor: '#3b82f6', borderRadius: 4 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 8 } } }, y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 8 }, precision: 0 } } } }
+            });
+        }
+
+        function updateTable(data) {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+            document.getElementById('tableCounter').innerText = `${data.length} de ${allData.length} registros exibidos`;
+
+            if (data.length === 0) return tbody.innerHTML = `<tr><td colspan="9" class="py-4 text-center text-slate-500">Nenhum objeto encontrado para os filtros aplicados.</td></tr>`;
+
+            data.forEach(d => {
+                const isReceived = !!receivedMap[d.objeto];
+                const recData = receivedMap[d.objeto];
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-800/50 transition-colors";
+                
+                let actionCellHtml = isReceived ? `
+                    <div class="flex flex-col items-center gap-0.5">
+                        <button onclick="undoReceipt('${escapeQuotes(d.objeto)}')" title="Clique para desfazer o recebimento" class="bg-emerald-500/20 hover:bg-rose-500/30 text-emerald-400 hover:text-rose-300 font-bold border border-emerald-500/40 hover:border-rose-500/40 text-[10px] px-2.5 py-1 rounded-full flex items-center gap-1 shadow transition group">
+                            <i class="fa-solid fa-circle-check text-xs group-hover:hidden"></i>
+                            <i class="fa-solid fa-arrow-rotate-left text-xs hidden group-hover:inline"></i>
+                            <span class="group-hover:hidden">Recebido</span>
+                            <span class="hidden group-hover:inline">Desfazer</span>
+                        </button>
+                        <span class="text-[9px] text-slate-400 font-mono" title="${recData.obs || ''}">${recData.dataHora.split(' ')[0]}</span>
+                    </div>
+                ` : `
+                    <button onclick="openReceiptModal('${escapeQuotes(d.objeto)}')" class="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[11px] px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow transition-all hover:scale-105 mx-auto">
+                        <i class="fa-solid fa-box-archive"></i> Receber
+                    </button>
+                `;
+
+                tr.innerHTML = `
+                    <td class="py-2.5 px-3 font-semibold text-blue-400 font-mono">${d.objeto}</td>
+                    <td class="py-2.5 px-3 text-slate-300">${d.dataSolicitacao}</td>
+                    <td class="py-2.5 px-3 text-slate-300">${d.dataPostagem}</td>
+                    <td class="py-2.5 px-3 font-semibold text-amber-400">${d.difDias}</td>
+                    <td class="py-2.5 px-3 font-medium text-slate-200">${d.remetente}</td>
+                    <td class="py-2.5 px-3 text-slate-300">${d.cidade}</td>
+                    <td class="py-2.5 px-3"><span class="bg-slate-800 text-slate-300 px-2 py-0.5 rounded text-[10px] border border-slate-700 font-bold">${d.uf}</span></td>
+                    <td class="py-2.5 px-3"><span class="font-semibold ${getStatusBadgeClass(d.status)}">${d.status}</span></td>
+                    <td class="py-2.5 px-3 text-center">${actionCellHtml}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function getStatusBadgeClass(status) {
+            const st = status.toLowerCase();
+            if (st.includes('entregue')) return 'text-emerald-400';
+            if (st.includes('coletado')) return 'text-amber-400';
+            return 'text-slate-300';
+        }
+
+        function openReceiptModal(objetoNum) {
+            const item = allData.find(d => d.objeto === objetoNum);
+            if (!item) return;
+
+            pendingReceiptObject = item;
+            document.getElementById('modalObjectDetails').innerHTML = `
+                <div><span class="text-slate-500">Nº do Objeto:</span> <strong class="text-blue-400">${item.objeto}</strong></div>
+                <div><span class="text-slate-500">Remetente:</span> <strong class="text-slate-200">${item.remetente}</strong></div>
+                <div><span class="text-slate-500">Origem:</span> <strong class="text-slate-200">${item.cidade} (${item.uf})</strong></div>
+                <div><span class="text-slate-500">Data Postagem:</span> <strong class="text-slate-200">${item.dataPostagem}</strong></div>
+                <div><span class="text-slate-500">Status Atual:</span> <strong class="text-amber-400">${item.status}</strong></div>
+            `;
+
+            document.getElementById('modalObsInput').value = '';
+            document.getElementById('receiptModal').classList.remove('hidden');
+            document.getElementById('receiptModal').classList.add('flex');
+        }
+
+        function closeReceiptModal() {
+            pendingReceiptObject = null;
+            document.getElementById('receiptModal').classList.add('hidden');
+            document.getElementById('receiptModal').classList.remove('flex');
+        }
+
+        function executeReceiptProcess() {
+            if (!pendingReceiptObject) return;
+
+            const obj = pendingReceiptObject;
+            const now = new Date();
+            const nowFormatted = now.toLocaleDateString('pt-BR') + ' ' + now.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'});
+            const obs = document.getElementById('modalObsInput').value.trim();
+
+            receivedMap[obj.objeto] = { dataHora: nowFormatted, obs: obs };
+            localStorage.setItem('sillion_received_objects', JSON.stringify(receivedMap));
+
+            const recipientsStr = NOTIFICATION_EMAILS.join(',');
+            const subject = encodeURIComponent(`[SILLION LOGÍSTICA] Confirmação de Recebimento - Objeto: ${obj.objeto}`);
+            
+            let bodyText = `Prezados,\n\n`;
+            bodyText += `Confirmamos o recebimento físico do objeto na Logística Sillion:\n\n`;
+            bodyText += `• Nº do Objeto: ${obj.objeto}\n`;
+            bodyText += `• Remetente: ${obj.remetente}\n`;
+            bodyText += `• Cidade / UF Origem: ${obj.cidade} / ${obj.uf}\n`;
+            bodyText += `• Data de Solicitação: ${obj.dataSolicitacao}\n`;
+            bodyText += `• Data de Postagem: ${obj.dataPostagem}\n`;
+            bodyText += `• Status no Relatório: ${obj.status}\n`;
+            bodyText += `• Data/Hora do Recebimento: ${nowFormatted}\n`;
+            if (obs) bodyText += `• Observações: ${obs}\n`;
+            bodyText += `\nAtenciosamente,\n`;
+            bodyText += `Módulo de Gestão Logística - Sillion\n`;
+
+            const mailtoUrl = `mailto:${recipientsStr}?subject=${subject}&body=${encodeURIComponent(bodyText)}`;
+
+            closeReceiptModal();
+            applyFilters();
+
+            window.location.href = mailtoUrl;
+            alert(`Recebimento do objeto ${obj.objeto} registrado com sucesso!`);
+        }
+
+        function undoReceipt(objetoNum) {
+            if (confirm(`Deseja desfazer o recebimento do objeto ${objetoNum}?`)) {
+                delete receivedMap[objetoNum];
+                localStorage.setItem('sillion_received_objects', JSON.stringify(receivedMap));
+                applyFilters();
+            }
+        }
+
+        function resetAllReceived() {
+            if (confirm("Deseja realmente apagar TODOS os recebimentos registrados e zerar o controle?")) {
+                localStorage.removeItem('sillion_received_objects');
+                receivedMap = {};
+                applyFilters();
+                alert("Todos os registros de recebimento foram zerados com sucesso!");
+            }
+        }
+
+        function escapeQuotes(str) {
+            return String(str).replace(/'/g, "\\'");
+        }
+    </script>
+</body>
+</html>
