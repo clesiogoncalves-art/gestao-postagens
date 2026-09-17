@@ -1,12 +1,11 @@
-JavaScript
 export async function onRequest(context) {
-    // Lê a variável de ambiente cadastrada no Cloudflare
-    const token = context.env.CLICKUP_TOKEN || context.env.CORREIOS_USER;
+  const { env } = context;
+  const pass = env.CORREIOS_PASS;
+  const user = env.CORREIOS_USER;
+  const contrato = env.CORREIOS_CONTRATO;
 
-    return new Response(JSON.stringify({ message: "Backend conectado com sucesso!", token_status: !!token }), {
-        headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-        }
-    });
+  // Lógica de integração com os Correios...
+  return new Response(JSON.stringify({ status: "OK" }), {
+    headers: { "Content-Type": "application/json" }
+  });
 }
