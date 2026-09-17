@@ -266,7 +266,7 @@
             }
 
             try {
-                const response = await fetch('/.netlify/functions/correios-sync', {
+                const response = await fetch('/api/sync', {
                     method: 'GET',
                     headers: { 'Content-Type': 'application/json' }
                 });
