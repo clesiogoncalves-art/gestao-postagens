@@ -1,27 +1,28 @@
 export async function onRequest(context) {
-    const { env } = context;
+    try {
+        const env = context.env || {};
 
-    // Resgata as credenciais cadastradas nas Variáveis do Cloudflare
-    const codAdmin = env.CORREIOS_COD_ADMIN;
-    const user = env.CORREIOS_USER;
-    const pass = env.CORREIOS_PASS;
+        const codAdmin = env.CORREIOS_COD_ADMIN;
+        const user = env.CORREIOS_USER;
+        const pass = env.CORREIOS_PASS;
 
-    if (!codAdmin || !user || !pass) {
-        return new Response(JSON.stringify({ error: "Credenciais ausentes no servidor." }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' }
-        });
-    }
+        if (!codAdmin || !user || !pass) {
+            return new Response(JSON.stringify({ 
+                error: "Credenciais ausentes nas variáveis do Cloudflare.", 
+                details: { COD_ADMIN: !!codAdmin, USER: !!user, PASS: !!pass } 
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+            });
+        }
 
-    // Obtém a data de hoje no formato DD/MM/YYYY exigido pelos Correios
-    const today = new Date();
-    const dd = String(today.getDate()).padStart(2, '0');
-    const mm = String(today.getMonth() + 1).padStart(2, '0');
-    const yyyy = today.getFullYear();
-    const dataConsulta = `${dd}/${mm}/${yyyy}`;
+        const today = new Date();
+        const dd = String(today.getDate()).padStart(2, '0');
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const yyyy = today.getFullYear();
+        const dataConsulta = `${dd}/${mm}/${yyyy}`;
 
-    // Monta o Envelope SOAP do método acompanharPedidoPorData (Anexo do Manual)
-    const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
+        const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://service.logisticareversa.correios.com.br/">
    <soapenv:Header/>
    <soapenv:Body>
@@ -33,28 +34,33 @@ export async function onRequest(context) {
    </soapenv:Body>
 </soapenv:Envelope>`;
 
-    try {
-        // Dispara a requisição HTTP com os cabeçalhos de segurança e autenticação CWS
+        const authString = `${user}:${pass}`;
+        const base64Auth = typeof btoa === 'function' 
+            ? btoa(unescape(encodeURIComponent(authString))) 
+            : '';
+
         const response = await fetch('https://logisticareversa.correios.com.br/logisticaReversaWS/logisticareversaWS', {
             method: 'POST',
             headers: {
                 'Content-Type': 'text/xml;charset=UTF-8',
-                'Authorization': 'Basic ' + btoa(`${user}:${pass}`),
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'Authorization': `Basic ${base64Auth}`,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
             },
             body: xmlBody
         });
 
+        const xmlText = await response.text();
+
         if (!response.ok) {
-            return new Response(JSON.stringify({ error: `Erro HTTP Correios: ${response.status}` }), {
-                status: response.status,
-                headers: { 'Content-Type': 'application/json' }
+            return new Response(JSON.stringify({ 
+                error: `Correios retornaram HTTP ${response.status}`, 
+                respostaBruta: xmlText.substring(0, 300) 
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
             });
         }
 
-        const xmlText = await response.text();
-
-        // Extrai cada bloco de objeto (<coleta>) do XML retornado
         const coletasMatches = xmlText.match(/<coleta>[\s\S]*?<\/coleta>/g) || [];
 
         const listaFormatada = coletasMatches.map(itemXml => {
@@ -83,13 +89,16 @@ export async function onRequest(context) {
 
         return new Response(JSON.stringify(listaFormatada), {
             status: 200,
-            headers: { 'Content-Type': 'application/json' }
+            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
         });
 
     } catch (err) {
-        return new Response(JSON.stringify({ error: err.message }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' }
+        return new Response(JSON.stringify({ 
+            error: "Falha na execução do Cloudflare Worker", 
+            mensagem: err.message || String(err) 
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
         });
     }
 }
