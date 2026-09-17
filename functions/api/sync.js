@@ -1,20 +1,32 @@
 export async function onRequest(context) {
+    const headers = {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': '*'
+    };
+
+    if (context.request.method === 'OPTIONS') {
+        return new Response(null, { headers });
+    }
+
     try {
         const env = context.env || {};
-
         const codAdmin = env.CORREIOS_COD_ADMIN;
         const user = env.CORREIOS_USER;
         const pass = env.CORREIOS_PASS;
 
         if (!codAdmin || !user || !pass) {
             return new Response(JSON.stringify({ 
-                error: "Credenciais ausentes nas variáveis do Cloudflare.", 
-                details: { COD_ADMIN: !!codAdmin, USER: !!user, PASS: !!pass } 
-            }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-            });
+                status: 'error',
+                message: "Credenciais não encontradas nas variáveis do Cloudflare.",
+                debug: { codAdmin: !!codAdmin, user: !!user, pass: !!pass }
+            }), { status: 200, headers });
         }
+
+        // Codificação Base64 compatível com o Cloudflare Worker
+        const authString = `${user}:${pass}`;
+        const base64Auth = btoa(authString);
 
         const today = new Date();
         const dd = String(today.getDate()).padStart(2, '0');
@@ -34,46 +46,54 @@ export async function onRequest(context) {
    </soapenv:Body>
 </soapenv:Envelope>`;
 
-        const authString = `${user}:${pass}`;
-        const base64Auth = typeof btoa === 'function' 
-            ? btoa(unescape(encodeURIComponent(authString))) 
-            : '';
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-        const response = await fetch('https://logisticareversa.correios.com.br/logisticaReversaWS/logisticareversaWS', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'text/xml;charset=UTF-8',
-                'Authorization': `Basic ${base64Auth}`,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-            },
-            body: xmlBody
-        });
+        let response;
+        try {
+            response = await fetch('https://logisticareversa.correios.com.br/logisticaReversaWS/logisticareversaWS', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'text/xml;charset=UTF-8',
+                    'Authorization': `Basic ${base64Auth}`,
+                    'User-Agent': 'Mozilla/5.0'
+                },
+                body: xmlBody,
+                signal: controller.signal
+            });
+        } catch (netErr) {
+            clearTimeout(timeoutId);
+            return new Response(JSON.stringify({
+                status: 'warning',
+                message: 'Servidor dos Correios não respondeu dentro do tempo limite.',
+                details: netErr.message
+            }), { status: 200, headers });
+        }
+        clearTimeout(timeoutId);
 
         const xmlText = await response.text();
 
         if (!response.ok) {
-            return new Response(JSON.stringify({ 
-                error: `Correios retornaram HTTP ${response.status}`, 
-                respostaBruta: xmlText.substring(0, 300) 
-            }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-            });
+            return new Response(JSON.stringify({
+                status: 'error',
+                message: `Correios retornaram HTTP ${response.status}`,
+                raw: xmlText.substring(0, 200)
+            }), { status: 200, headers });
         }
 
         const coletasMatches = xmlText.match(/<coleta>[\s\S]*?<\/coleta>/g) || [];
 
         const listaFormatada = coletasMatches.map(itemXml => {
-            const extract = (tag) => {
+            const getTag = (tag) => {
                 const m = itemXml.match(new RegExp(`<${tag}>(.*?)<\/${tag}>`));
                 return m ? m[1].trim() : '';
             };
 
-            const etiqueta = extract('numero_etiqueta');
-            const pedido = extract('numero_pedido');
-            const statusDesc = extract('descricao_status');
-            const dataAtt = extract('data_atualizacao');
-            const remetenteCtrl = extract('controle_cliente');
+            const etiqueta = getTag('numero_etiqueta');
+            const pedido = getTag('numero_pedido');
+            const statusDesc = getTag('descricao_status');
+            const dataAtt = getTag('data_atualizacao');
+            const remetenteCtrl = getTag('controle_cliente');
 
             return {
                 objeto: etiqueta || pedido || 'S/N',
@@ -87,18 +107,13 @@ export async function onRequest(context) {
             };
         });
 
-        return new Response(JSON.stringify(listaFormatada), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-        });
+        return new Response(JSON.stringify(listaFormatada), { status: 200, headers });
 
     } catch (err) {
         return new Response(JSON.stringify({ 
-            error: "Falha na execução do Cloudflare Worker", 
-            mensagem: err.message || String(err) 
-        }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-        });
+            status: 'error',
+            message: 'Erro interno na função Cloudflare',
+            error: err.stack || err.message || String(err)
+        }), { status: 200, headers });
     }
 }
