@@ -49,7 +49,7 @@
                     <i class="fa-solid fa-bolt text-amber-400"></i>
                     Sincronização Automática via WebService Correios
                 </h2>
-                <p class="text-xs text-slate-400 mt-0.5">Leitura de solicitações e rastreamento em tempo real direto da base de dados dos Correios (Ativo no Netlify).</p>
+                <p class="text-xs text-slate-400 mt-0.5">Leitura de solicitações e rastreamento em tempo real direto da base de dados dos Correios.</p>
             </div>
             <span id="lastSyncTime" class="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-lg border border-slate-700">
                 Última sincronização: Não realizada
@@ -239,17 +239,30 @@
         let cityChart = null;
 
         document.addEventListener('DOMContentLoaded', () => {
+            // 1. Carrega base em cache local imediatamente ao abrir a página
+            const savedData = localStorage.getItem('sillion_postagens_data');
+            if (savedData) {
+                try {
+                    allData = JSON.parse(savedData);
+                    applyFilters();
+                    const lastUpdate = localStorage.getItem('sillion_last_update') || 'Anterior';
+                    document.getElementById('lastSyncTime').innerText = `Base em memória (${lastUpdate})`;
+                } catch(e) {
+                    console.error("Erro ao carregar cache do localStorage", e);
+                }
+            }
+
+            // 2. Dispara a sincronização automática em segundo plano
             syncCorreiosAPI();
         });
 
         // =========================================================================
-        // AUTOMAÇÃO VIAL NETLIFY FUNCTION (PROTEGIDA CONTRA ERROS DE FILE://)
+        // AUTOMAÇÃO VIA API / PROXY
         // =========================================================================
         async function syncCorreiosAPI() {
             const spinner = document.getElementById('syncSpinner');
             const badge = document.getElementById('apiStatusBadge');
 
-            // Se aberto via protocolo local (file://), desativa a busca no Netlify para não gerar erro CORS no console
             if (window.location.protocol === 'file:') {
                 if (badge) {
                     badge.innerText = "Modo Local / Arquivo Manual";
@@ -271,9 +284,7 @@
                     headers: { 'Content-Type': 'application/json' }
                 });
 
-                if (!response.ok) {
-                    throw new Error(`HTTP Error ${response.status}`);
-                }
+                if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
 
                 const data = await response.json();
                 
@@ -289,22 +300,27 @@
                         status: item.status || 'Indefinido'
                     }));
 
+                    // Salva os dados atualizados no localStorage
+                    localStorage.setItem('sillion_postagens_data', JSON.stringify(allData));
+                    const now = new Date();
+                    const nowStr = `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}`;
+                    localStorage.setItem('sillion_last_update', nowStr);
+
                     applyFilters();
 
-                    const now = new Date();
-                    document.getElementById('lastSyncTime').innerText = `Última sincronização: ${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}`;
+                    document.getElementById('lastSyncTime').innerText = `Última sincronização: ${nowStr}`;
                     
                     if (badge) {
                         badge.innerText = "API Conectada";
                         badge.className = "bg-emerald-500/10 text-emerald-400 text-xs font-semibold px-3 py-1 rounded-full border border-emerald-500/20";
                     }
                 } else {
-                    throw new Error("Base retornou vazia");
+                    console.info("Nenhuma nova movimentação encontrada.");
                 }
 
             } catch (err) {
-                console.warn('Função Netlify indisponível ou ainda não publicada:', err);
-                if (badge) {
+                console.warn('Função indisponível ou executando em fallback:', err.message);
+                if (badge && allData.length === 0) {
                     badge.innerText = "Modo Fallback / Manual";
                     badge.className = "bg-slate-700 text-slate-300 text-xs font-semibold px-3 py-1 rounded-full border border-slate-600";
                 }
@@ -334,6 +350,14 @@
                 }
             };
             textReader.readAsText(file, 'ISO-8859-1');
+        }
+
+        function saveManualToCache() {
+            localStorage.setItem('sillion_postagens_data', JSON.stringify(allData));
+            const now = new Date();
+            const nowStr = `${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}`;
+            localStorage.setItem('sillion_last_update', nowStr);
+            document.getElementById('lastSyncTime').innerText = `Última importação manual: ${nowStr}`;
         }
 
         function normalizeStr(str) {
@@ -427,6 +451,7 @@
                     }
                 }
             }
+            saveManualToCache();
             applyFilters();
         }
 
@@ -457,6 +482,7 @@
                         }
                     });
                 });
+                saveManualToCache();
                 applyFilters();
             };
             arrayReader.readAsArrayBuffer(file);
